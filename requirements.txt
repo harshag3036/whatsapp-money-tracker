@@ -1,0 +1,5 @@
+flask==2.3.3
+twilio==8.5.0
+pandas==2.1.0
+openpyxl==3.1.2
+python-dotenv==1.0.0
