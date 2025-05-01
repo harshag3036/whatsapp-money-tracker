@@ -1,4 +1,4 @@
-# Deploying WhatsApp Money Tracker Bot on AWS Lightsail
+    # Deploying WhatsApp Money Tracker Bot on AWS Lightsail
 
 This guide will walk you through deploying your WhatsApp Money Tracker Bot on AWS Lightsail and connecting it to Twilio.
 
@@ -120,8 +120,8 @@ pip install gunicorn  # For production serving
 # Create .env file
 cat > .env << EOF
 # Twilio Credentials
-TWILIO_ACCOUNT_SID=AC75b3494bc4a1a16bbadd1faf8086087d
-TWILIO_AUTH_TOKEN=g3vSsnxQikMn7VJ5JmAVTp3HnJ2tIYf1
+TWILIO_ACCOUNT_SID=token
+TWILIO_AUTH_TOKEN=token
 TWILIO_PHONE_NUMBER=whatsapp:+14155238886
 ADMIN_PHONE_NUMBER=whatsapp:+919454715963
 
