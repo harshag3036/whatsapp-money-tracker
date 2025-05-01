@@ -131,6 +131,108 @@ PORT=5000
 EOF
 ```
 
+## Step 7.5: Set Up Google Sheets Integration
+
+For the Google Sheets integration, you need to set up authentication. The recommended approach for production is to use a service account:
+
+```bash
+# Install Google API dependencies
+pip install -r google_sheets_requirements.txt
+```
+
+### Upload Service Account Key
+
+1. **Upload your existing service_account.json file**:
+   ```bash
+   # On your local machine
+   scp -i your-key.pem service_account.json ubuntu@your-static-ip:~/whatsapp-money-tracker/
+   ```
+
+2. **Verify the file was uploaded correctly**:
+   ```bash
+   # On your Lightsail instance
+   cd ~/whatsapp-money-tracker
+   ls -la service_account.json
+   ```
+
+3. **Check the service account email**:
+   ```bash
+   # On your Lightsail instance
+   grep -o '"client_email": "[^"]*"' service_account.json
+   ```
+
+### Test Google Sheets Access
+
+1. **Create a test script**:
+   ```bash
+   # On your Lightsail instance
+   cd ~/whatsapp-money-tracker
+   
+   # Create a simple test script
+   cat > test_sheets_access.py << 'EOF'
+   #!/usr/bin/env python3
+   import os
+   import json
+   from googleapiclient.discovery import build
+   from google.oauth2 import service_account
+
+   # Constants
+   SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+   SPREADSHEET_ID = '1O4HXZ3qKlRuVodnpNDmuvzif3B5Hbo8xfZKpin5wLfM'
+
+   # Get the service account file path
+   service_account_path = 'service_account.json'
+   
+   print(f"Loading service account from {service_account_path}...")
+   creds = service_account.Credentials.from_service_account_file(
+       service_account_path, scopes=SCOPES)
+   
+   print("Building Google Sheets API service...")
+   service = build('sheets', 'v4', credentials=creds)
+   
+   print(f"Testing access to spreadsheet ID: {SPREADSHEET_ID}...")
+   spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+   
+   print("Success! Spreadsheet title:", spreadsheet.get('properties', {}).get('title', 'Unknown'))
+   EOF
+   
+   # Make it executable
+   chmod +x test_sheets_access.py
+   ```
+
+2. **Run the test script**:
+   ```bash
+   python3 test_sheets_access.py
+   ```
+
+3. **If you encounter SSL certificate errors**:
+   ```bash
+   # Install certificates
+   pip install --upgrade certifi
+   
+   # Or try this temporary workaround
+   cat > ssl_fix.py << 'EOF'
+   import ssl
+   ssl._create_default_https_context = ssl._create_unverified_context
+   print("SSL verification disabled")
+   EOF
+   
+   # Run with the fix
+   python3 -c "import ssl; ssl._create_default_https_context = ssl._create_unverified_context; exec(open('test_sheets_access.py').read())"
+   ```
+
+### Ensure Google Sheet is Shared
+
+Make sure your Google Sheet is shared with the service account email:
+
+1. Open your Google Sheet (https://docs.google.com/spreadsheets/d/1O4HXZ3qKlRuVodnpNDmuvzif3B5Hbo8xfZKpin5wLfM/edit)
+2. Click "Share" in the top-right corner
+3. Add the service account email (from the grep command above)
+4. Give it "Editor" access
+5. Click "Share"
+
+For detailed instructions, refer to the `GOOGLE_SHEETS_SETUP.md` file in the project.
+
 ## Step 8: Set Up Gunicorn Service
 
 ```bash
@@ -138,7 +240,7 @@ EOF
 sudo nano /etc/systemd/system/whatsapp-bot.service
 ```
 
-Add the following content:
+Add the following content (make sure to copy exactly as shown, with no extra spaces or line breaks):
 
 ```
 [Unit]
@@ -153,6 +255,29 @@ Restart=always
 
 [Install]
 WantedBy=multi-user.target
+```
+
+Note: If you still encounter the "Bad message" error, try creating the service file directly on the server with:
+
+```bash
+sudo bash -c 'cat > /etc/systemd/system/whatsapp-bot.service << EOL
+[Unit]
+Description=WhatsApp Money Tracker Bot
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/whatsapp-money-tracker
+ExecStart=/home/ubuntu/whatsapp-money-tracker/venv/bin/gunicorn -w 3 -b 127.0.0.1:5000 src.app:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOL'
+
+sudo systemctl daemon-reload
+sudo systemctl enable whatsapp-bot
+sudo systemctl start whatsapp-bot
 ```
 
 Save and exit (Ctrl+X, then Y, then Enter).

@@ -1,151 +1,166 @@
 # WhatsApp Money Tracker Bot
 
-A WhatsApp bot that helps users track money lending and borrowing activities. Users can select a person from a list, enter an amount, and the data is saved to an Excel sheet.
+A WhatsApp bot that helps users track money lending and borrowing activities through an intuitive, interactive interface. Users can select a person from a clickable list, specify if they're lending or borrowing money, enter an amount, and the data is saved to a Google Sheet organized by date.
 
 ## Features
 
-- Select contacts from a predefined list
-- Record lending/borrowing transactions
-- Automated Excel sheet generation (daily basis)
-- Simple and intuitive user interface
-- Secure data storage
+- **Interactive Interface**: Clickable buttons for contact selection and transaction confirmation
+- **Google Sheets Integration**: Data stored in Google Sheets with daily sheets
+- **Flexible Deployment**: Run locally for testing or deploy to AWS Lightsail for production
+- **Balance Tracking**: Track balances for each contact
+- **Daily Reports**: Generate reports of daily transactions
 
-## Implementation Options
+## Project Structure
 
-There are several ways to implement a WhatsApp bot. Here are the main options:
+```
+whatsapp-money-tracker/
+├── src/
+│   ├── app.py              # Main Flask application with Twilio webhook
+│   ├── contacts.py         # Contact management module
+│   ├── sheets_manager.py   # Google Sheets integration
+│   └── __init__.py         # Package initialization
+├── .env.example            # Environment variables template
+├── .gitignore              # Git ignore file
+├── AWS_LIGHTSAIL_DEPLOYMENT.md  # AWS deployment guide
+├── DEPLOYMENT.md           # General deployment guide
+├── GOOGLE_SHEETS_SETUP.md  # Google Sheets setup instructions
+├── README.md               # This file
+├── google_sheets_requirements.txt  # Google API dependencies
+├── requirements.txt        # Python dependencies
+├── run.py                  # Entry point script
+├── test_interactive.py     # Interactive testing script
+└── test_with_curl.sh       # Basic testing script
+```
 
-### 1. WhatsApp Business API (Official Solution)
+## Setup Instructions
 
-**Description:**
-The official WhatsApp Business API allows businesses to communicate with customers at scale.
+### 1. Install Dependencies
 
-**Costs:**
-- Setup fee: Varies by solution provider (typically $500-$1000)
-- Monthly fee: $50-$500 depending on provider and volume
-- Message fees: 
-  - Session messages (user-initiated): Free for 24 hours
-  - Template messages (business-initiated): $0.01-$0.05 per message depending on country
+```bash
+# Install basic dependencies
+pip install -r requirements.txt
 
-**Pros:**
-- Official solution with full WhatsApp support
-- Reliable and scalable
-- Access to all WhatsApp features
-- Higher message limits
+# Install Google Sheets dependencies
+pip install -r google_sheets_requirements.txt
+```
 
-**Cons:**
-- Expensive for small projects
-- Requires business verification
-- More complex setup
+### 2. Configure Environment Variables
 
-**Implementation Steps:**
-1. Apply for WhatsApp Business API through a solution provider (e.g., Twilio, MessageBird, Vonage)
-2. Complete business verification
-3. Set up your application server
-4. Integrate with the API
-5. Create message templates for approval
+Copy the example environment file and edit it:
 
-### 2. Twilio WhatsApp API
+```bash
+cp .env.example .env
+```
 
-**Description:**
-Twilio provides a simplified way to access the WhatsApp Business API.
+Update the `.env` file with your Twilio credentials:
 
-**Costs:**
-- Twilio account: Free to create
-- WhatsApp messages: $0.005-$0.04 per message (varies by country)
-- Phone number: $1/month for a Twilio phone number
-- No mandatory monthly fee, but:
-  - Twilio requires a minimum monthly spend of $0 (pay-as-you-go)
-  - WhatsApp Business Account has a $50 minimum monthly spend requirement
-  - You only pay for messages you send/receive (per-message pricing)
+```
+TWILIO_ACCOUNT_SID=your_account_sid
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_PHONE_NUMBER=whatsapp:+14155238886
+ADMIN_PHONE_NUMBER=whatsapp:+919XXXXXXXXX
+```
 
-**Pros:**
-- Easier setup than direct WhatsApp Business API
-- Good documentation and support
-- Reliable service
-- Pay-as-you-go pricing for most Twilio services
+### 3. Set Up Google Sheets Integration
 
-**Cons:**
-- Still relatively expensive for personal projects
-- Requires business verification
-- WhatsApp Business Account minimum spend requirement
+Follow the detailed instructions in `GOOGLE_SHEETS_SETUP.md` to:
+- Create a Google Cloud project
+- Enable the Google Sheets API
+- Set up authentication (OAuth or Service Account)
+- Configure access to the Google Sheet
 
-### 3. Node.js Libraries (Unofficial)
+### 4. Run the Application
 
-**Description:**
-Open-source libraries like whatsapp-web.js, Baileys, or wppconnect that use WhatsApp Web under the hood.
+```bash
+python run.py
+```
 
-**Costs:**
-- Hosting: $5-$10/month for a basic VPS (DigitalOcean, AWS, etc.)
-- No API fees
+This will start the Flask server on port 5000.
 
-**Pros:**
-- Very low cost
-- No verification required
-- Full access to WhatsApp features
-- Flexible implementation
+### 5. Connect to Twilio
 
-**Cons:**
-- Unofficial solution not supported by WhatsApp
-- Risk of account blocking if detected as automation
-- Requires keeping a session alive
+To connect the bot to WhatsApp via Twilio, you need to:
+- Set up a public URL (using ngrok for development or a server for production)
+- Configure the Twilio webhook to point to your URL + `/webhook`
+- Join the Twilio WhatsApp sandbox
 
-### 4. Third-party Services (e.g., WA-Automate, Wati.io)
+Detailed instructions are in the `DEPLOYMENT.md` file.
 
-**Description:**
-Services that provide WhatsApp bot functionality through their platforms.
+## Testing the Bot
 
-**Costs:**
-- WA-Automate: Free open-source or $39-$99/month for cloud version
-- Wati.io: $49-$399/month depending on features and contacts
+### Local Testing with Interactive Messages
 
-**Pros:**
-- Easier to set up than direct API
-- Often includes visual builders
-- Managed infrastructure
+Use the provided Python script to test the bot locally:
 
-**Cons:**
-- Monthly subscription costs
-- Limited customization in some cases
-- May still face WhatsApp blocking issues
+```bash
+./test_interactive.py
+```
 
-## Recommended Approach for This Project
+This script simulates the WhatsApp conversation flow with interactive buttons.
 
-For a personal money tracking bot, the Node.js library approach is most cost-effective:
+### Basic Testing with curl
 
-1. Use whatsapp-web.js (open-source library)
-2. Host on a low-cost VPS ($5-$10/month)
-3. Implement custom logic for contact selection and amount entry
-4. Use Excel.js or similar library for Excel file generation
+For basic testing without interactive features:
 
-## Technical Implementation
+```bash
+./test_with_curl.sh
+```
 
-### Prerequisites
-- Node.js environment
-- A phone number for WhatsApp
-- Basic hosting (VPS or always-on computer)
+## Deployment Options
 
-### Core Components
-1. WhatsApp connection module
-2. User interaction flow
-3. Contact management
-4. Transaction recording
-5. Excel report generation
+### Local Development
 
-### Data Flow
-1. Bot receives message from user
-2. Bot presents list of contacts
-3. User selects contact
-4. Bot prompts for amount
-5. User enters amount
-6. Bot confirms and saves transaction
-7. Daily Excel report is generated
+For local development and testing:
+- Use ngrok to create a public URL
+- Configure Twilio to use this URL
+- Follow the instructions in `DEPLOYMENT.md`
 
-## Risk Considerations
+### AWS Lightsail Deployment
 
-- WhatsApp does not officially support bots outside their Business API
-- Automated accounts may be temporarily or permanently banned
-- For production use, consider the official WhatsApp Business API
+For production deployment:
+- Deploy to AWS Lightsail ($5/month)
+- Set up with Nginx and Gunicorn
+- Configure with SSL for security
+- Detailed instructions in `AWS_LIGHTSAIL_DEPLOYMENT.md`
 
-## Next Steps
+## Using the Bot
 
-See the implementation in this repository for a working example using whatsapp-web.js.
+1. **Start a Transaction**:
+   - Send "start" to the bot
+   - You'll receive a list of contacts with clickable buttons
+
+2. **Select a Contact**:
+   - Click on a contact button
+   - The bot will ask if you're lending or borrowing
+
+3. **Specify Transaction Type**:
+   - Click "Lending" or "Borrowing"
+   - The bot will ask for the amount
+
+4. **Enter Amount**:
+   - Type the amount (e.g., "500")
+   - The bot will ask for confirmation
+
+5. **Confirm Transaction**:
+   - Click "Yes" to confirm or "No" to cancel
+   - The transaction will be recorded in Google Sheets
+
+6. **Other Commands**:
+   - "balance" - Check balances for all contacts
+   - "report" - Generate a report of today's transactions
+   - "help" - Show available commands
+   - "reset" - Reset the current conversation
+
+## Customization
+
+- **Add/Edit Contacts**: Modify the `CONTACTS` list in `src/contacts.py`
+- **Change Google Sheet**: Update the `SPREADSHEET_ID` in `src/sheets_manager.py`
+- **Modify UI Text**: Edit the message strings in `src/app.py`
+
+## Troubleshooting
+
+If you encounter issues:
+1. Check the Flask application logs
+2. Verify your Twilio configuration
+3. Ensure Google Sheets authentication is set up correctly
+4. Refer to the troubleshooting sections in the deployment guides

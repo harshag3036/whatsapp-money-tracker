@@ -15,8 +15,8 @@ import json
 load_dotenv()
 
 # Import our modules
-from src.contacts import get_contact_by_id, format_contacts_list
-from src.excel_manager import add_transaction, get_balance_for_contact, generate_daily_report
+from src.contacts import get_contact_by_id, get_all_contacts
+from src.sheets_manager import add_transaction, get_balance_for_contact, generate_daily_report
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -65,6 +65,106 @@ def reset_session(phone_number):
         }
     return user_sessions[phone_number]
 
+def create_contact_list_message():
+    """Create an interactive list of contacts."""
+    contacts = get_all_contacts()
+    
+    # Create a list of contacts with buttons
+    contact_buttons = []
+    for contact in contacts:
+        contact_buttons.append({
+            "type": "reply",
+            "reply": {
+                "id": f"contact_{contact['id']}",
+                "title": contact['name']
+            }
+        })
+    
+    # Create the interactive message
+    interactive_data = {
+        "type": "button",
+        "header": {
+            "type": "text",
+            "text": "Select a Contact"
+        },
+        "body": {
+            "text": "Please select a contact from the list below:"
+        },
+        "action": {
+            "buttons": contact_buttons[:3]  # WhatsApp allows max 3 buttons
+        }
+    }
+    
+    return interactive_data
+
+def create_transaction_type_message(contact_name):
+    """Create an interactive message for selecting transaction type."""
+    interactive_data = {
+        "type": "button",
+        "header": {
+            "type": "text",
+            "text": f"Transaction with {contact_name}"
+        },
+        "body": {
+            "text": f"Are you lending money to {contact_name} or borrowing from them?"
+        },
+        "action": {
+            "buttons": [
+                {
+                    "type": "reply",
+                    "reply": {
+                        "id": "type_lend",
+                        "title": "Lending"
+                    }
+                },
+                {
+                    "type": "reply",
+                    "reply": {
+                        "id": "type_borrow",
+                        "title": "Borrowing"
+                    }
+                }
+            ]
+        }
+    }
+    
+    return interactive_data
+
+def create_confirmation_message(contact_name, amount, transaction_type):
+    """Create an interactive message for confirmation."""
+    action = "lend to" if transaction_type == 'lend' else "borrow from"
+    
+    interactive_data = {
+        "type": "button",
+        "header": {
+            "type": "text",
+            "text": "Confirm Transaction"
+        },
+        "body": {
+            "text": f"Please confirm:\n\nYou will {action} {contact_name} ₹{amount:.2f}"
+        },
+        "action": {
+            "buttons": [
+                {
+                    "type": "reply",
+                    "reply": {
+                        "id": "confirm_yes",
+                        "title": "Yes"
+                    }
+                },
+                {
+                    "type": "reply",
+                    "reply": {
+                        "id": "confirm_no",
+                        "title": "No"
+                    }
+                }
+            ]
+        }
+    }
+    
+    return interactive_data
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Handle incoming WhatsApp messages."""
@@ -72,16 +172,92 @@ def webhook():
     incoming_msg = request.values.get('Body', '').strip()
     sender_phone = request.values.get('From', '')
     
+    # Check for interactive message responses
+    interactive_type = request.values.get('InteractiveType', '')
+    interactive_id = request.values.get('InteractiveButtonId', '')
+    
     # Get or create user session
     session = get_or_create_session(sender_phone)
     
     # Initialize response
     resp = MessagingResponse()
+    message = resp.message()
+    
+    # Handle interactive responses
+    if interactive_type == 'button_reply':
+        if interactive_id.startswith('contact_'):
+            # Extract contact ID from the button ID
+            contact_id = int(interactive_id.split('_')[1])
+            contact = get_contact_by_id(contact_id)
+            
+            if contact:
+                session['selected_contact'] = contact
+                session['state'] = STATES['AWAITING_TYPE']
+                
+                # Send interactive message for transaction type
+                message.content_type = 'application/json'
+                message.body = json.dumps({
+                    "interactive": create_transaction_type_message(contact['name'])
+                })
+                return str(resp)
+        
+        elif interactive_id.startswith('type_'):
+            # Extract transaction type from the button ID
+            transaction_type = interactive_id.split('_')[1]
+            
+            if transaction_type in ['lend', 'borrow']:
+                session['transaction_type'] = transaction_type
+                session['state'] = STATES['AWAITING_AMOUNT']
+                
+                action = "lending to" if transaction_type == 'lend' else "borrowing from"
+                message.body = f"You're {action} {session['selected_contact']['name']}. Please enter the amount:"
+                return str(resp)
+        
+        elif interactive_id.startswith('confirm_'):
+            # Extract confirmation from the button ID
+            confirmation = interactive_id.split('_')[1]
+            
+            if confirmation == 'yes':
+                # Add the transaction to Google Sheets
+                success = add_transaction(
+                    session['selected_contact']['id'],
+                    session['selected_contact']['name'],
+                    session['amount'],
+                    session['transaction_type']
+                )
+                
+                if success:
+                    action = "lent to" if session['transaction_type'] == 'lend' else "borrowed from"
+                    message.body = (
+                        f"✅ Transaction recorded!\n\n"
+                        f"You have {action} {session['selected_contact']['name']} ₹{session['amount']:.2f}\n\n"
+                        f"Send 'start' to record another transaction."
+                    )
+                    
+                    # Get updated balance
+                    balance = get_balance_for_contact(session['selected_contact']['id'])
+                    if balance > 0:
+                        resp.message(f"{session['selected_contact']['name']} owes you ₹{abs(balance):.2f} in total.")
+                    elif balance < 0:
+                        resp.message(f"You owe {session['selected_contact']['name']} ₹{abs(balance):.2f} in total.")
+                    else:
+                        resp.message(f"Your balance with {session['selected_contact']['name']} is settled.")
+                    
+                    # Reset session
+                    reset_session(sender_phone)
+                else:
+                    message.body = "❌ Error recording transaction. Please try again."
+            
+            elif confirmation == 'no':
+                message.body = "Transaction cancelled. Send 'start' to begin again."
+                reset_session(sender_phone)
+            
+            return str(resp)
     
     # Check for reset command
     if incoming_msg.lower() in ['reset', 'restart', 'cancel']:
         reset_session(sender_phone)
-        resp.message("Session reset. Send 'start' to begin a new transaction.")
+        message.body = "Session reset. Send 'start' to begin a new transaction."
         return str(resp)
     
     # Check for help command
@@ -94,33 +270,61 @@ def webhook():
             "- 'report': Generate today's report\n"
             "- 'help': Show this help message"
         )
-        resp.message(help_text)
+        message.body = help_text
         return str(resp)
     
     # Check for balance command
     if incoming_msg.lower() == 'balance':
-        # This would be expanded in a real app to show all balances
-        resp.message("To check a specific contact's balance, please start a transaction first.")
+        # Get all contacts
+        contacts = get_all_contacts()
+        
+        # Get balance for each contact
+        balance_text = "Current balances:\n\n"
+        for contact in contacts:
+            balance = get_balance_for_contact(contact['id'])
+            if balance > 0:
+                balance_text += f"{contact['name']} owes you ₹{abs(balance):.2f}\n"
+            elif balance < 0:
+                balance_text += f"You owe {contact['name']} ₹{abs(balance):.2f}\n"
+            else:
+                balance_text += f"Your balance with {contact['name']} is settled\n"
+        
+        message.body = balance_text
         return str(resp)
     
     # Check for report command
     if incoming_msg.lower() == 'report':
-        report_path = generate_daily_report()
-        if report_path:
-            resp.message("Daily report generated. The admin will receive it shortly.")
-            # In a real app, you would send the file to the admin
-            # This requires additional setup not covered in this example
+        report = generate_daily_report()
+        
+        if report['transactions']:
+            report_text = f"Daily Report for {report['transactions'][0]['date']}:\n\n"
+            report_text += f"Total Lent: ₹{report['total_lent']:.2f}\n"
+            report_text += f"Total Borrowed: ₹{report['total_borrowed']:.2f}\n"
+            report_text += f"Net Amount: ₹{report['net_amount']:.2f}\n\n"
+            
+            report_text += "Transactions:\n"
+            for transaction in report['transactions']:
+                action = "Lent to" if transaction['type'] == 'lend' else "Borrowed from"
+                report_text += f"- {action} {transaction['contact_name']}: ₹{transaction['amount']:.2f}\n"
+            
+            message.body = report_text
         else:
-            resp.message("No transactions found for today.")
+            message.body = "No transactions found for today."
+        
         return str(resp)
     
     # Handle conversation based on current state
     if session['state'] == STATES['INITIAL']:
         if incoming_msg.lower() == 'start':
             session['state'] = STATES['AWAITING_CONTACT']
-            resp.message(format_contacts_list())
+            
+            # Send interactive message with contact list
+            message.content_type = 'application/json'
+            message.body = json.dumps({
+                "interactive": create_contact_list_message()
+            })
         else:
-            resp.message("Welcome to Money Tracker! Send 'start' to begin a new transaction or 'help' for commands.")
+            message.body = "Welcome to Money Tracker! Send 'start' to begin a new transaction or 'help' for commands."
     
     elif session['state'] == STATES['AWAITING_CONTACT']:
         try:
@@ -129,21 +333,58 @@ def webhook():
             if contact:
                 session['selected_contact'] = contact
                 session['state'] = STATES['AWAITING_TYPE']
-                resp.message(f"Selected: {contact['name']}\n\nAre you lending money to them or borrowing from them? Reply with 'lend' or 'borrow'.")
+                
+                # Send interactive message for transaction type
+                message.content_type = 'application/json'
+                message.body = json.dumps({
+                    "interactive": create_transaction_type_message(contact['name'])
+                })
             else:
-                resp.message("Invalid contact number. Please select from the list:")
-                resp.message(format_contacts_list())
+                message.body = "Invalid contact number. Please select from the list:"
+                
+                # Resend interactive message with contact list
+                message.content_type = 'application/json'
+                message.body = json.dumps({
+                    "interactive": create_contact_list_message()
+                })
         except ValueError:
-            resp.message("Please enter a valid contact number from the list.")
+            # If the user didn't enter a number, check if they entered a contact name
+            contacts = get_all_contacts()
+            matching_contacts = [c for c in contacts if c['name'].lower() == incoming_msg.lower()]
+            
+            if matching_contacts:
+                contact = matching_contacts[0]
+                session['selected_contact'] = contact
+                session['state'] = STATES['AWAITING_TYPE']
+                
+                # Send interactive message for transaction type
+                message.content_type = 'application/json'
+                message.body = json.dumps({
+                    "interactive": create_transaction_type_message(contact['name'])
+                })
+            else:
+                message.body = "Please select a valid contact from the list."
+                
+                # Resend interactive message with contact list
+                message.content_type = 'application/json'
+                message.body = json.dumps({
+                    "interactive": create_contact_list_message()
+                })
     
     elif session['state'] == STATES['AWAITING_TYPE']:
         if incoming_msg.lower() in ['lend', 'borrow']:
             session['transaction_type'] = incoming_msg.lower()
             session['state'] = STATES['AWAITING_AMOUNT']
             action = "lending to" if incoming_msg.lower() == 'lend' else "borrowing from"
-            resp.message(f"You're {action} {session['selected_contact']['name']}. Please enter the amount:")
+            message.body = f"You're {action} {session['selected_contact']['name']}. Please enter the amount:"
         else:
-            resp.message("Please reply with either 'lend' or 'borrow'.")
+            message.body = "Please reply with either 'lend' or 'borrow'."
+            
+            # Resend interactive message for transaction type
+            message.content_type = 'application/json'
+            message.body = json.dumps({
+                "interactive": create_transaction_type_message(session['selected_contact']['name'])
+            })
     
     elif session['state'] == STATES['AWAITING_AMOUNT']:
         # Try to extract a valid amount
@@ -154,20 +395,23 @@ def webhook():
                 session['amount'] = amount
                 session['state'] = STATES['AWAITING_CONFIRMATION']
                 
-                action = "lend to" if session['transaction_type'] == 'lend' else "borrow from"
-                resp.message(
-                    f"Please confirm:\n\n"
-                    f"You will {action} {session['selected_contact']['name']} ₹{amount:.2f}\n\n"
-                    f"Reply 'yes' to confirm or 'no' to cancel."
-                )
+                # Send interactive message for confirmation
+                message.content_type = 'application/json'
+                message.body = json.dumps({
+                    "interactive": create_confirmation_message(
+                        session['selected_contact']['name'],
+                        amount,
+                        session['transaction_type']
+                    )
+                })
             except ValueError:
-                resp.message("Invalid amount. Please enter a valid number.")
+                message.body = "Invalid amount. Please enter a valid number."
         else:
-            resp.message("Please enter a valid amount (numbers only).")
+            message.body = "Please enter a valid amount (numbers only)."
     
     elif session['state'] == STATES['AWAITING_CONFIRMATION']:
         if incoming_msg.lower() in ['yes', 'y', 'confirm']:
-            # Add the transaction to Excel
+            # Add the transaction to Google Sheets
             success = add_transaction(
                 session['selected_contact']['id'],
                 session['selected_contact']['name'],
@@ -177,7 +421,7 @@ def webhook():
             
             if success:
                 action = "lent to" if session['transaction_type'] == 'lend' else "borrowed from"
-                resp.message(
+                message.body = (
                     f"✅ Transaction recorded!\n\n"
                     f"You have {action} {session['selected_contact']['name']} ₹{session['amount']:.2f}\n\n"
                     f"Send 'start' to record another transaction."
@@ -195,13 +439,23 @@ def webhook():
                 # Reset session
                 reset_session(sender_phone)
             else:
-                resp.message("❌ Error recording transaction. Please try again.")
+                message.body = "❌ Error recording transaction. Please try again."
         
         elif incoming_msg.lower() in ['no', 'n', 'cancel']:
-            resp.message("Transaction cancelled. Send 'start' to begin again.")
+            message.body = "Transaction cancelled. Send 'start' to begin again."
             reset_session(sender_phone)
         else:
-            resp.message("Please reply with 'yes' to confirm or 'no' to cancel.")
+            message.body = "Please reply with 'yes' to confirm or 'no' to cancel."
+            
+            # Resend interactive message for confirmation
+            message.content_type = 'application/json'
+            message.body = json.dumps({
+                "interactive": create_confirmation_message(
+                    session['selected_contact']['name'],
+                    session['amount'],
+                    session['transaction_type']
+                )
+            })
     
     return str(resp)
 
@@ -211,9 +465,6 @@ def health_check():
     return json.dumps({"status": "healthy"}), 200, {'ContentType': 'application/json'}
 
 if __name__ == '__main__':
-    # Create data directory if it doesn't exist
-    os.makedirs('data', exist_ok=True)
-    
     # Get port from environment variable or use default
     port = int(os.getenv('PORT', 5000))
     
