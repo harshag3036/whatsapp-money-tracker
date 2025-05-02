@@ -101,28 +101,27 @@ def webhook():
     
     # Initialize response
     resp = MessagingResponse()
-    message = resp.message()
+    
+    # We'll set the message content at the end
+    response_text = None
     
     # Check for reset command
     if incoming_msg.lower() in ['reset', 'restart', 'cancel']:
         reset_session(sender_phone)
-        message.body = "Session reset. Send 'start' to begin a new transaction."
-        return str(resp)
+        response_text = "Session reset. Send 'start' to begin a new transaction."
     
     # Check for help command
-    if incoming_msg.lower() in ['help', 'commands']:
-        help_text = (
+    elif incoming_msg.lower() in ['help', 'commands']:
+        response_text = (
             "Available commands:\n"
             "- 'start': Begin a new transaction\n"
             "- 'reset': Reset the current session\n"
             "- 'report': Generate today's report\n"
             "- 'help': Show this help message"
         )
-        message.body = help_text
-        return str(resp)
     
     # Check for report command
-    if incoming_msg.lower() == 'report':
+    elif incoming_msg.lower() == 'report':
         report = generate_daily_report()
         
         if report['transactions']:
@@ -133,21 +132,19 @@ def webhook():
             for transaction in report['transactions']:
                 report_text += f"- Gave to {transaction['contact_name']}: ₹{transaction['amount']:.2f}\n"
             
-            message.body = report_text
+            response_text = report_text
         else:
-            message.body = "No transactions found for today."
-        
-        return str(resp)
+            response_text = "No transactions found for today."
     
     # Handle conversation based on current state
-    if session['state'] == STATES['INITIAL']:
+    elif session['state'] == STATES['INITIAL']:
         if incoming_msg.lower() == 'start':
             session['state'] = STATES['AWAITING_CONTACT']
             
             # Send text-based contact list
-            message.body = get_contacts_text()
+            response_text = get_contacts_text()
         else:
-            message.body = "Welcome to Money Tracker! Send 'start' to begin a new transaction or 'help' for commands."
+            response_text = "Welcome to Money Tracker! Send 'start' to begin a new transaction or 'help' for commands."
     
     elif session['state'] == STATES['AWAITING_CONTACT']:
         try:
@@ -161,9 +158,9 @@ def webhook():
                 session['state'] = STATES['AWAITING_AMOUNT']
                 
                 # Send amount prompt
-                message.body = get_amount_text(contact['name'])
+                response_text = get_amount_text(contact['name'])
             else:
-                message.body = "Invalid contact number. Please select from the list:\n\n" + get_contacts_text()
+                response_text = "Invalid contact number. Please select from the list:\n\n" + get_contacts_text()
         except ValueError:
             # If the user didn't enter a number, check if they entered a contact name
             contacts = get_all_contacts()
@@ -175,9 +172,9 @@ def webhook():
                 session['state'] = STATES['AWAITING_AMOUNT']
                 
                 # Send amount prompt
-                message.body = get_amount_text(contact['name'])
+                response_text = get_amount_text(contact['name'])
             else:
-                message.body = "Please select a valid contact from the list:\n\n" + get_contacts_text()
+                response_text = "Please select a valid contact from the list:\n\n" + get_contacts_text()
     
     elif session['state'] == STATES['AWAITING_AMOUNT']:
         # Try to extract a valid amount
@@ -189,14 +186,14 @@ def webhook():
                 session['state'] = STATES['AWAITING_CONFIRMATION']
                 
                 # Send confirmation message
-                message.body = get_confirmation_text(
+                response_text = get_confirmation_text(
                     session['selected_contact']['name'],
                     amount
                 )
             except ValueError:
-                message.body = "Invalid amount. Please enter a valid number."
+                response_text = "Invalid amount. Please enter a valid number."
         else:
-            message.body = "Please enter a valid amount (numbers only)."
+            response_text = "Please enter a valid amount (numbers only)."
     
     elif session['state'] == STATES['AWAITING_CONFIRMATION']:
         if incoming_msg.lower() in ['yes', 'y', 'confirm']:
@@ -209,7 +206,7 @@ def webhook():
             )
             
             if success:
-                message.body = (
+                response_text = (
                     f"✅ Transaction recorded!\n\n"
                     f"You are giving {session['selected_contact']['name']} ₹{session['amount']:.2f}\n\n"
                     f"Send 'start' to record another transaction."
@@ -218,13 +215,20 @@ def webhook():
                 # Reset session
                 reset_session(sender_phone)
             else:
-                message.body = "❌ Error recording transaction. Please try again."
+                response_text = "❌ Error recording transaction. Please try again."
         
         elif incoming_msg.lower() in ['no', 'n', 'cancel']:
-            message.body = "Transaction cancelled. Send 'start' to begin again."
+            response_text = "Transaction cancelled. Send 'start' to begin again."
             reset_session(sender_phone)
         else:
-            message.body = "Please reply with 'yes' to confirm or 'no' to cancel."
+            response_text = "Please reply with 'yes' to confirm or 'no' to cancel."
+    
+    # Ensure we have a non-empty response
+    if not response_text:
+        response_text = "Welcome to Money Tracker! Send 'start' to begin a new transaction or 'help' for commands."
+    
+    # Add the message to the response
+    resp.message(response_text)
     
     return str(resp)
 
