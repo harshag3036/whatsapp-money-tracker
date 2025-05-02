@@ -33,6 +33,9 @@ client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 # In a production app, use a database
 user_sessions = {}
 
+# Debug flag
+DEBUG = True
+
 # Define conversation states
 STATES = {
     'INITIAL': 'initial',
@@ -45,6 +48,8 @@ STATES = {
 def get_or_create_session(phone_number):
     """Get or create a new user session."""
     if phone_number not in user_sessions:
+        if DEBUG:
+            print(f"Creating new session for {phone_number}")
         user_sessions[phone_number] = {
             'state': STATES['INITIAL'],
             'selected_contact': None,
@@ -55,6 +60,8 @@ def get_or_create_session(phone_number):
 def reset_session(phone_number):
     """Reset a user session to initial state."""
     if phone_number in user_sessions:
+        if DEBUG:
+            print(f"Resetting session for {phone_number}")
         user_sessions[phone_number] = {
             'state': STATES['INITIAL'],
             'selected_contact': None,
@@ -202,12 +209,18 @@ def webhook():
     elif session['state'] == STATES['AWAITING_CONFIRMATION']:
         if incoming_msg.lower() in ['yes', 'y', 'confirm']:
             # Add the transaction to Google Sheets (always use 'lend' as transaction type)
-            success = add_transaction(
-                session['selected_contact']['id'],
-                session['selected_contact']['name'],
-                session['amount'],
-                'lend'  # Always use 'lend' as the transaction type
-            )
+            if DEBUG:
+                print(f"Adding transaction: {session['selected_contact']['id']}, {session['selected_contact']['name']}, {session['amount']}")
+            try:
+                success = add_transaction(
+                    session['selected_contact']['id'],
+                    session['selected_contact']['name'],
+                    session['amount'],
+                    'lend'  # Always use 'lend' as the transaction type
+                )
+            except Exception as e:
+                print(f"Error adding transaction: {e}")
+                success = False
             
             if success:
                 response_text = (
