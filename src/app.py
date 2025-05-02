@@ -18,7 +18,7 @@ load_dotenv()
 # Import our modules
 from src.contacts import get_contact_by_id, get_all_contacts
 from src.sheets_manager import add_transaction, get_balance_for_contact, generate_daily_report
-from src.session_manager import (
+from src.file_session_manager import (
     get_or_create_session, reset_session, update_session_state, 
     is_duplicate_message, add_transaction_to_history, STATES
 )
