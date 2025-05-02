@@ -95,7 +95,7 @@ def test_service_account():
         
         result = service.spreadsheets().values().update(
             spreadsheetId=SPREADSHEET_ID,
-            range='Test_Sheet!A1:B2',
+            range='Test_Sheet2!A1:B2',
             valueInputOption='RAW',
             body=body
         ).execute()
