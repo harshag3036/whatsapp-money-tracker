@@ -99,6 +99,10 @@ def webhook():
     # Get or create user session
     session = get_or_create_session(sender_phone)
     
+    # Log the incoming message and session state
+    print(f"Incoming message: '{incoming_msg}' from {sender_phone}")
+    print(f"Current session state: {session}")
+    
     # Initialize response
     resp = MessagingResponse()
     
@@ -227,8 +231,14 @@ def webhook():
     if not response_text:
         response_text = "Welcome to Money Tracker! Send 'start' to begin a new transaction or 'help' for commands."
     
+    # Log the response
+    print(f"Response: '{response_text}'")
+    
     # Add the message to the response
     resp.message(response_text)
+    
+    # Log the updated session state
+    print(f"Updated session state: {session}")
     
     return str(resp)
 
