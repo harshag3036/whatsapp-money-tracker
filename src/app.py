@@ -38,7 +38,6 @@ STATES = {
     'INITIAL': 'initial',
     'AWAITING_CONTACT': 'awaiting_contact',
     'AWAITING_AMOUNT': 'awaiting_amount',
-    'AWAITING_TYPE': 'awaiting_type',
     'AWAITING_CONFIRMATION': 'awaiting_confirmation',
     'COMPLETED': 'completed'
 }
@@ -49,8 +48,7 @@ def get_or_create_session(phone_number):
         user_sessions[phone_number] = {
             'state': STATES['INITIAL'],
             'selected_contact': None,
-            'amount': None,
-            'transaction_type': None
+            'amount': None
         }
     return user_sessions[phone_number]
 
@@ -60,110 +58,36 @@ def reset_session(phone_number):
         user_sessions[phone_number] = {
             'state': STATES['INITIAL'],
             'selected_contact': None,
-            'amount': None,
-            'transaction_type': None
+            'amount': None
         }
     return user_sessions[phone_number]
 
-def create_contact_list_message():
-    """Create an interactive list of contacts."""
+def get_contacts_text():
+    """Create a text-based list of contacts."""
     contacts = get_all_contacts()
     
-    # Create a list of contacts with buttons
-    contact_buttons = []
-    for contact in contacts:
-        contact_buttons.append({
-            "type": "reply",
-            "reply": {
-                "id": f"contact_{contact['id']}",
-                "title": contact['name']
-            }
-        })
+    # Create a text list of contacts
+    contacts_text = "Please select a contact by replying with the number:\n"
+    for i, contact in enumerate(contacts, 1):
+        contacts_text += f"{i}. {contact['name']}\n"
     
-    # Create the interactive message
-    interactive_data = {
-        "type": "button",
-        "header": {
-            "type": "text",
-            "text": "Select a Contact"
-        },
-        "body": {
-            "text": "Please select a contact from the list below:"
-        },
-        "action": {
-            "buttons": contact_buttons[:3]  # WhatsApp allows max 3 buttons
-        }
-    }
-    
-    return interactive_data
+    return contacts_text
 
-def create_transaction_type_message(contact_name):
-    """Create an interactive message for selecting transaction type."""
-    interactive_data = {
-        "type": "button",
-        "header": {
-            "type": "text",
-            "text": f"Transaction with {contact_name}"
-        },
-        "body": {
-            "text": f"Are you lending money to {contact_name} or borrowing from them?"
-        },
-        "action": {
-            "buttons": [
-                {
-                    "type": "reply",
-                    "reply": {
-                        "id": "type_lend",
-                        "title": "Lending"
-                    }
-                },
-                {
-                    "type": "reply",
-                    "reply": {
-                        "id": "type_borrow",
-                        "title": "Borrowing"
-                    }
-                }
-            ]
-        }
-    }
-    
-    return interactive_data
+def get_amount_text(contact_name):
+    """Create a text message for entering amount."""
+    return (
+        f"Transaction with {contact_name}\n\n"
+        f"Please enter the amount you are giving to {contact_name}:"
+    )
 
-def create_confirmation_message(contact_name, amount, transaction_type):
-    """Create an interactive message for confirmation."""
-    action = "lend to" if transaction_type == 'lend' else "borrow from"
-    
-    interactive_data = {
-        "type": "button",
-        "header": {
-            "type": "text",
-            "text": "Confirm Transaction"
-        },
-        "body": {
-            "text": f"Please confirm:\n\nYou will {action} {contact_name} ₹{amount:.2f}"
-        },
-        "action": {
-            "buttons": [
-                {
-                    "type": "reply",
-                    "reply": {
-                        "id": "confirm_yes",
-                        "title": "Yes"
-                    }
-                },
-                {
-                    "type": "reply",
-                    "reply": {
-                        "id": "confirm_no",
-                        "title": "No"
-                    }
-                }
-            ]
-        }
-    }
-    
-    return interactive_data
+def get_confirmation_text(contact_name, amount):
+    """Create a text message for confirmation."""
+    return (
+        f"Confirm Transaction\n\n"
+        f"Please confirm:\n\n"
+        f"You are giving {contact_name} ₹{amount:.2f}\n\n"
+        f"Reply with 'yes' to confirm or 'no' to cancel."
+    )
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -172,138 +96,18 @@ def webhook():
     incoming_msg = request.values.get('Body', '').strip()
     sender_phone = request.values.get('From', '')
     
-    # Check for interactive message responses
-    interactive_type = request.values.get('InteractiveType', '')
-    interactive_id = request.values.get('InteractiveButtonId', '')
-    
     # Get or create user session
     session = get_or_create_session(sender_phone)
     
-    # Flag to track if we're sending an interactive message
-    sending_interactive = False
-    interactive_data = None
-    
-    # Function to send interactive message via Twilio API
-    def send_interactive_message(to, interactive_content):
-        try:
-            client.messages.create(
-                from_=TWILIO_PHONE_NUMBER,
-                to=to,
-                content_type='application/json',
-                body=json.dumps({
-                    "interactive": interactive_content
-                })
-            )
-            return True
-        except Exception as e:
-            print(f"Error sending interactive message: {e}")
-            return False
-    
-    # Handle interactive responses
-    if interactive_type == 'button_reply':
-        if interactive_id.startswith('contact_'):
-            # Extract contact ID from the button ID
-            contact_id = int(interactive_id.split('_')[1])
-            contact = get_contact_by_id(contact_id)
-            
-            if contact:
-                session['selected_contact'] = contact
-                session['state'] = STATES['AWAITING_TYPE']
-                
-                # Send interactive message for transaction type
-                send_interactive_message(sender_phone, create_transaction_type_message(contact['name']))
-                return ''
-        
-        elif interactive_id.startswith('type_'):
-            # Extract transaction type from the button ID
-            transaction_type = interactive_id.split('_')[1]
-            
-            if transaction_type in ['lend', 'borrow']:
-                session['transaction_type'] = transaction_type
-                session['state'] = STATES['AWAITING_AMOUNT']
-                
-                action = "lending to" if transaction_type == 'lend' else "borrowing from"
-                client.messages.create(
-                    from_=TWILIO_PHONE_NUMBER,
-                    to=sender_phone,
-                    body=f"You're {action} {session['selected_contact']['name']}. Please enter the amount:"
-                )
-                return ''
-        
-        elif interactive_id.startswith('confirm_'):
-            # Extract confirmation from the button ID
-            confirmation = interactive_id.split('_')[1]
-            
-            if confirmation == 'yes':
-                # Add the transaction to Google Sheets
-                success = add_transaction(
-                    session['selected_contact']['id'],
-                    session['selected_contact']['name'],
-                    session['amount'],
-                    session['transaction_type']
-                )
-                
-                if success:
-                    action = "lent to" if session['transaction_type'] == 'lend' else "borrowed from"
-                    client.messages.create(
-                        from_=TWILIO_PHONE_NUMBER,
-                        to=sender_phone,
-                        body=(
-                            f"✅ Transaction recorded!\n\n"
-                            f"You have {action} {session['selected_contact']['name']} ₹{session['amount']:.2f}\n\n"
-                            f"Send 'start' to record another transaction."
-                        )
-                    )
-                    
-                    # Get updated balance
-                    balance = get_balance_for_contact(session['selected_contact']['id'])
-                    if balance > 0:
-                        client.messages.create(
-                            from_=TWILIO_PHONE_NUMBER,
-                            to=sender_phone,
-                            body=f"{session['selected_contact']['name']} owes you ₹{abs(balance):.2f} in total."
-                        )
-                    elif balance < 0:
-                        client.messages.create(
-                            from_=TWILIO_PHONE_NUMBER,
-                            to=sender_phone,
-                            body=f"You owe {session['selected_contact']['name']} ₹{abs(balance):.2f} in total."
-                        )
-                    else:
-                        client.messages.create(
-                            from_=TWILIO_PHONE_NUMBER,
-                            to=sender_phone,
-                            body=f"Your balance with {session['selected_contact']['name']} is settled."
-                        )
-                    
-                    # Reset session
-                    reset_session(sender_phone)
-                else:
-                    client.messages.create(
-                        from_=TWILIO_PHONE_NUMBER,
-                        to=sender_phone,
-                        body="❌ Error recording transaction. Please try again."
-                    )
-            
-            elif confirmation == 'no':
-                client.messages.create(
-                    from_=TWILIO_PHONE_NUMBER,
-                    to=sender_phone,
-                    body="Transaction cancelled. Send 'start' to begin again."
-                )
-                reset_session(sender_phone)
-            
-            return ''
+    # Initialize response
+    resp = MessagingResponse()
+    message = resp.message()
     
     # Check for reset command
     if incoming_msg.lower() in ['reset', 'restart', 'cancel']:
         reset_session(sender_phone)
-        client.messages.create(
-            from_=TWILIO_PHONE_NUMBER,
-            to=sender_phone,
-            body="Session reset. Send 'start' to begin a new transaction."
-        )
-        return ''
+        message.body = "Session reset. Send 'start' to begin a new transaction."
+        return str(resp)
     
     # Check for help command
     if incoming_msg.lower() in ['help', 'commands']:
@@ -311,39 +115,11 @@ def webhook():
             "Available commands:\n"
             "- 'start': Begin a new transaction\n"
             "- 'reset': Reset the current session\n"
-            "- 'balance': Check balances for all contacts\n"
             "- 'report': Generate today's report\n"
             "- 'help': Show this help message"
         )
-        client.messages.create(
-            from_=TWILIO_PHONE_NUMBER,
-            to=sender_phone,
-            body=help_text
-        )
-        return ''
-    
-    # Check for balance command
-    if incoming_msg.lower() == 'balance':
-        # Get all contacts
-        contacts = get_all_contacts()
-        
-        # Get balance for each contact
-        balance_text = "Current balances:\n\n"
-        for contact in contacts:
-            balance = get_balance_for_contact(contact['id'])
-            if balance > 0:
-                balance_text += f"{contact['name']} owes you ₹{abs(balance):.2f}\n"
-            elif balance < 0:
-                balance_text += f"You owe {contact['name']} ₹{abs(balance):.2f}\n"
-            else:
-                balance_text += f"Your balance with {contact['name']} is settled\n"
-        
-        client.messages.create(
-            from_=TWILIO_PHONE_NUMBER,
-            to=sender_phone,
-            body=balance_text
-        )
-        return ''
+        message.body = help_text
+        return str(resp)
     
     # Check for report command
     if incoming_msg.lower() == 'report':
@@ -351,66 +127,43 @@ def webhook():
         
         if report['transactions']:
             report_text = f"Daily Report for {report['transactions'][0]['date']}:\n\n"
-            report_text += f"Total Lent: ₹{report['total_lent']:.2f}\n"
-            report_text += f"Total Borrowed: ₹{report['total_borrowed']:.2f}\n"
-            report_text += f"Net Amount: ₹{report['net_amount']:.2f}\n\n"
+            report_text += f"Total Amount: ₹{report['total_lent']:.2f}\n\n"
             
             report_text += "Transactions:\n"
             for transaction in report['transactions']:
-                action = "Lent to" if transaction['type'] == 'lend' else "Borrowed from"
-                report_text += f"- {action} {transaction['contact_name']}: ₹{transaction['amount']:.2f}\n"
+                report_text += f"- Gave to {transaction['contact_name']}: ₹{transaction['amount']:.2f}\n"
             
-            client.messages.create(
-                from_=TWILIO_PHONE_NUMBER,
-                to=sender_phone,
-                body=report_text
-            )
+            message.body = report_text
         else:
-            client.messages.create(
-                from_=TWILIO_PHONE_NUMBER,
-                to=sender_phone,
-                body="No transactions found for today."
-            )
+            message.body = "No transactions found for today."
         
-        return ''
+        return str(resp)
     
     # Handle conversation based on current state
     if session['state'] == STATES['INITIAL']:
         if incoming_msg.lower() == 'start':
             session['state'] = STATES['AWAITING_CONTACT']
             
-            # Send interactive message with contact list
-            send_interactive_message(sender_phone, create_contact_list_message())
-            return ''
+            # Send text-based contact list
+            message.body = get_contacts_text()
         else:
-            client.messages.create(
-                from_=TWILIO_PHONE_NUMBER,
-                to=sender_phone,
-                body="Welcome to Money Tracker! Send 'start' to begin a new transaction or 'help' for commands."
-            )
-            return ''
+            message.body = "Welcome to Money Tracker! Send 'start' to begin a new transaction or 'help' for commands."
     
     elif session['state'] == STATES['AWAITING_CONTACT']:
         try:
-            contact_id = int(incoming_msg)
-            contact = get_contact_by_id(contact_id)
-            if contact:
+            # Try to parse as a number (index)
+            contact_index = int(incoming_msg)
+            contacts = get_all_contacts()
+            
+            if 1 <= contact_index <= len(contacts):
+                contact = contacts[contact_index - 1]
                 session['selected_contact'] = contact
-                session['state'] = STATES['AWAITING_TYPE']
+                session['state'] = STATES['AWAITING_AMOUNT']
                 
-                # Send interactive message for transaction type
-                send_interactive_message(sender_phone, create_transaction_type_message(contact['name']))
-                return ''
+                # Send amount prompt
+                message.body = get_amount_text(contact['name'])
             else:
-                client.messages.create(
-                    from_=TWILIO_PHONE_NUMBER,
-                    to=sender_phone,
-                    body="Invalid contact number. Please select from the list:"
-                )
-                
-                # Resend interactive message with contact list
-                send_interactive_message(sender_phone, create_contact_list_message())
-                return ''
+                message.body = "Invalid contact number. Please select from the list:\n\n" + get_contacts_text()
         except ValueError:
             # If the user didn't enter a number, check if they entered a contact name
             contacts = get_all_contacts()
@@ -419,43 +172,12 @@ def webhook():
             if matching_contacts:
                 contact = matching_contacts[0]
                 session['selected_contact'] = contact
-                session['state'] = STATES['AWAITING_TYPE']
+                session['state'] = STATES['AWAITING_AMOUNT']
                 
-                # Send interactive message for transaction type
-                send_interactive_message(sender_phone, create_transaction_type_message(contact['name']))
-                return ''
+                # Send amount prompt
+                message.body = get_amount_text(contact['name'])
             else:
-                client.messages.create(
-                    from_=TWILIO_PHONE_NUMBER,
-                    to=sender_phone,
-                    body="Please select a valid contact from the list."
-                )
-                
-                # Resend interactive message with contact list
-                send_interactive_message(sender_phone, create_contact_list_message())
-                return ''
-    
-    elif session['state'] == STATES['AWAITING_TYPE']:
-        if incoming_msg.lower() in ['lend', 'borrow']:
-            session['transaction_type'] = incoming_msg.lower()
-            session['state'] = STATES['AWAITING_AMOUNT']
-            action = "lending to" if incoming_msg.lower() == 'lend' else "borrowing from"
-            client.messages.create(
-                from_=TWILIO_PHONE_NUMBER,
-                to=sender_phone,
-                body=f"You're {action} {session['selected_contact']['name']}. Please enter the amount:"
-            )
-            return ''
-        else:
-            client.messages.create(
-                from_=TWILIO_PHONE_NUMBER,
-                to=sender_phone,
-                body="Please reply with either 'lend' or 'borrow'."
-            )
-            
-            # Resend interactive message for transaction type
-            send_interactive_message(sender_phone, create_transaction_type_message(session['selected_contact']['name']))
-            return ''
+                message.body = "Please select a valid contact from the list:\n\n" + get_contacts_text()
     
     elif session['state'] == STATES['AWAITING_AMOUNT']:
         # Try to extract a valid amount
@@ -466,112 +188,45 @@ def webhook():
                 session['amount'] = amount
                 session['state'] = STATES['AWAITING_CONFIRMATION']
                 
-                # Send interactive message for confirmation
-                send_interactive_message(
-                    sender_phone, 
-                    create_confirmation_message(
-                        session['selected_contact']['name'],
-                        amount,
-                        session['transaction_type']
-                    )
+                # Send confirmation message
+                message.body = get_confirmation_text(
+                    session['selected_contact']['name'],
+                    amount
                 )
-                return ''
             except ValueError:
-                client.messages.create(
-                    from_=TWILIO_PHONE_NUMBER,
-                    to=sender_phone,
-                    body="Invalid amount. Please enter a valid number."
-                )
-                return ''
+                message.body = "Invalid amount. Please enter a valid number."
         else:
-            client.messages.create(
-                from_=TWILIO_PHONE_NUMBER,
-                to=sender_phone,
-                body="Please enter a valid amount (numbers only)."
-            )
-            return ''
+            message.body = "Please enter a valid amount (numbers only)."
     
     elif session['state'] == STATES['AWAITING_CONFIRMATION']:
         if incoming_msg.lower() in ['yes', 'y', 'confirm']:
-            # Add the transaction to Google Sheets
+            # Add the transaction to Google Sheets (always use 'lend' as transaction type)
             success = add_transaction(
                 session['selected_contact']['id'],
                 session['selected_contact']['name'],
                 session['amount'],
-                session['transaction_type']
+                'lend'  # Always use 'lend' as the transaction type
             )
             
             if success:
-                action = "lent to" if session['transaction_type'] == 'lend' else "borrowed from"
-                client.messages.create(
-                    from_=TWILIO_PHONE_NUMBER,
-                    to=sender_phone,
-                    body=(
-                        f"✅ Transaction recorded!\n\n"
-                        f"You have {action} {session['selected_contact']['name']} ₹{session['amount']:.2f}\n\n"
-                        f"Send 'start' to record another transaction."
-                    )
+                message.body = (
+                    f"✅ Transaction recorded!\n\n"
+                    f"You are giving {session['selected_contact']['name']} ₹{session['amount']:.2f}\n\n"
+                    f"Send 'start' to record another transaction."
                 )
-                
-                # Get updated balance
-                balance = get_balance_for_contact(session['selected_contact']['id'])
-                if balance > 0:
-                    client.messages.create(
-                        from_=TWILIO_PHONE_NUMBER,
-                        to=sender_phone,
-                        body=f"{session['selected_contact']['name']} owes you ₹{abs(balance):.2f} in total."
-                    )
-                elif balance < 0:
-                    client.messages.create(
-                        from_=TWILIO_PHONE_NUMBER,
-                        to=sender_phone,
-                        body=f"You owe {session['selected_contact']['name']} ₹{abs(balance):.2f} in total."
-                    )
-                else:
-                    client.messages.create(
-                        from_=TWILIO_PHONE_NUMBER,
-                        to=sender_phone,
-                        body=f"Your balance with {session['selected_contact']['name']} is settled."
-                    )
                 
                 # Reset session
                 reset_session(sender_phone)
             else:
-                client.messages.create(
-                    from_=TWILIO_PHONE_NUMBER,
-                    to=sender_phone,
-                    body="❌ Error recording transaction. Please try again."
-                )
-            return ''
+                message.body = "❌ Error recording transaction. Please try again."
         
         elif incoming_msg.lower() in ['no', 'n', 'cancel']:
-            client.messages.create(
-                from_=TWILIO_PHONE_NUMBER,
-                to=sender_phone,
-                body="Transaction cancelled. Send 'start' to begin again."
-            )
+            message.body = "Transaction cancelled. Send 'start' to begin again."
             reset_session(sender_phone)
-            return ''
         else:
-            client.messages.create(
-                from_=TWILIO_PHONE_NUMBER,
-                to=sender_phone,
-                body="Please reply with 'yes' to confirm or 'no' to cancel."
-            )
-            
-            # Resend interactive message for confirmation
-            send_interactive_message(
-                sender_phone,
-                create_confirmation_message(
-                    session['selected_contact']['name'],
-                    session['amount'],
-                    session['transaction_type']
-                )
-            )
-            return ''
+            message.body = "Please reply with 'yes' to confirm or 'no' to cancel."
     
-    # If we reach here, return an empty response
-    return ''
+    return str(resp)
 
 @app.route('/health', methods=['GET'])
 def health_check():
