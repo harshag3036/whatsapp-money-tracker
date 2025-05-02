@@ -27,61 +27,22 @@ def get_credentials():
     Returns:
         Credentials object for Google Sheets API
     """
-    creds = None
-    token_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'token.json')
-    credentials_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'credentials.json')
-    service_account_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'service-account.json')
+    # Use service account authentication (best for production)
+    service_account_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'service_account.json')
     
-    # First, try to use service account if available (best for production)
-    if os.path.exists(service_account_path):
-        try:
-            creds = service_account.Credentials.from_service_account_file(
-                service_account_path, scopes=SCOPES)
-            print("Using service account authentication")
-            return creds
-        except Exception as e:
-            print(f"Error using service account: {e}")
-            # Fall back to OAuth if service account fails
+    if not os.path.exists(service_account_path):
+        raise FileNotFoundError(
+            f"Service account file not found at {service_account_path}. "
+            "Please follow the setup instructions in GOOGLE_SHEETS_SETUP.md"
+        )
     
-    # Next, try to use saved OAuth credentials
-    if os.path.exists(token_path):
-        try:
-            creds = Credentials.from_authorized_user_info(json.load(open(token_path)))
-            print("Using saved OAuth credentials")
-        except Exception as e:
-            print(f"Error loading saved credentials: {e}")
-    
-    # If no valid credentials available, let the user log in
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                print("Refreshed expired credentials")
-            except Exception as e:
-                print(f"Error refreshing credentials: {e}")
-                creds = None
-        
-        # If still no valid credentials, try OAuth flow
-        if not creds:
-            if not os.path.exists(credentials_path):
-                raise FileNotFoundError(
-                    "Neither credentials.json nor service-account.json found. "
-                    "Please follow the setup instructions in GOOGLE_SHEETS_SETUP.md"
-                )
-            
-            try:
-                flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-                creds = flow.run_local_server(port=0)
-                print("Completed OAuth flow")
-                
-                # Save the credentials for the next run
-                with open(token_path, 'w') as token:
-                    token.write(creds.to_json())
-                    print(f"Saved credentials to {token_path}")
-            except Exception as e:
-                raise Exception(f"Error during OAuth flow: {e}")
-    
-    return creds
+    try:
+        creds = service_account.Credentials.from_service_account_file(
+            service_account_path, scopes=SCOPES)
+        print(f"Using service account authentication from {service_account_path}")
+        return creds
+    except Exception as e:
+        raise Exception(f"Error using service account: {e}")
 
 def get_service():
     """
