@@ -246,8 +246,14 @@ def webhook():
                     f"Send 'start' to record another transaction."
                 )
                 
-                # Reset session
-                reset_session(sender_phone)
+                # Change state to COMPLETED instead of resetting
+                # This is a critical change to fix the flow issue
+                session = update_session_state(
+                    sender_phone, 
+                    STATES['COMPLETED'],
+                    transaction_complete=True
+                )
+                logger.info(f"Session moved to COMPLETED state instead of reset")
             else:
                 logger.error(f"Failed to record transaction")
                 response_text = "❌ Error recording transaction. Please try again."
@@ -257,6 +263,17 @@ def webhook():
             reset_session(sender_phone)
         else:
             response_text = "Please reply with 'yes' to confirm or 'no' to cancel."
+    
+    # Handle COMPLETED state - this is a new state to fix the flow issue
+    elif session['state'] == STATES['COMPLETED']:
+        if incoming_msg.lower() == 'start':
+            # Start a new transaction
+            session = update_session_state(sender_phone, STATES['AWAITING_CONTACT'])
+            logger.info(f"Starting new transaction from COMPLETED state")
+            response_text = get_contacts_text()
+        else:
+            # Any other message in COMPLETED state should show the help message
+            response_text = "Transaction completed. Send 'start' to begin a new transaction or 'help' for commands."
     
     # Ensure we have a non-empty response
     if not response_text:

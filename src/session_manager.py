@@ -19,7 +19,7 @@ STATES = {
     'AWAITING_CONTACT': 'awaiting_contact',
     'AWAITING_AMOUNT': 'awaiting_amount',
     'AWAITING_CONFIRMATION': 'awaiting_confirmation',
-    'COMPLETED': 'completed'
+    'COMPLETED': 'completed'  # This state is used after a transaction is completed
 }
 
 # In-memory session storage
