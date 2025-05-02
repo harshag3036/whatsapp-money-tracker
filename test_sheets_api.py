@@ -63,7 +63,7 @@ def test_service_account():
         request = {
             'addSheet': {
                 'properties': {
-                    'title': 'Test_Sheet',
+                    'title': 'Test_Sheet2',
                     'gridProperties': {
                         'rowCount': 10,
                         'columnCount': 5
