@@ -10,6 +10,7 @@ from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
 from dotenv import load_dotenv
 import json
+import logging
 
 # Load environment variables
 load_dotenv()
@@ -17,6 +18,17 @@ load_dotenv()
 # Import our modules
 from src.contacts import get_contact_by_id, get_all_contacts
 from src.sheets_manager import add_transaction, get_balance_for_contact, generate_daily_report
+from src.session_manager import (
+    get_or_create_session, reset_session, update_session_state, 
+    is_duplicate_message, add_transaction_to_history, STATES
+)
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('app')
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -29,45 +41,8 @@ ADMIN_PHONE_NUMBER = os.getenv('ADMIN_PHONE_NUMBER')
 
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-# User session storage (in-memory for simplicity)
-# In a production app, use a database
-user_sessions = {}
-
 # Debug flag
 DEBUG = True
-
-# Define conversation states
-STATES = {
-    'INITIAL': 'initial',
-    'AWAITING_CONTACT': 'awaiting_contact',
-    'AWAITING_AMOUNT': 'awaiting_amount',
-    'AWAITING_CONFIRMATION': 'awaiting_confirmation',
-    'COMPLETED': 'completed'
-}
-
-def get_or_create_session(phone_number):
-    """Get or create a new user session."""
-    if phone_number not in user_sessions:
-        if DEBUG:
-            print(f"Creating new session for {phone_number}")
-        user_sessions[phone_number] = {
-            'state': STATES['INITIAL'],
-            'selected_contact': None,
-            'amount': None
-        }
-    return user_sessions[phone_number]
-
-def reset_session(phone_number):
-    """Reset a user session to initial state."""
-    if phone_number in user_sessions:
-        if DEBUG:
-            print(f"Resetting session for {phone_number}")
-        user_sessions[phone_number] = {
-            'state': STATES['INITIAL'],
-            'selected_contact': None,
-            'amount': None
-        }
-    return user_sessions[phone_number]
 
 def get_contacts_text():
     """Create a text-based list of contacts."""
@@ -102,13 +77,21 @@ def webhook():
     # Get the message details
     incoming_msg = request.values.get('Body', '').strip()
     sender_phone = request.values.get('From', '')
+    message_sid = request.values.get('MessageSid', '')
+    
+    # Log the incoming message
+    logger.info(f"Incoming message: '{incoming_msg}' from {sender_phone} (SID: {message_sid})")
+    
+    # Check for duplicate message (could happen due to network retries)
+    if is_duplicate_message(sender_phone, message_sid):
+        logger.warning(f"Duplicate message detected: {message_sid}")
+        return str(MessagingResponse())
     
     # Get or create user session
     session = get_or_create_session(sender_phone)
     
-    # Log the incoming message and session state
-    print(f"Incoming message: '{incoming_msg}' from {sender_phone}")
-    print(f"Current session state: {session}")
+    # Log the current session state
+    logger.info(f"Current session state: {session['state']}")
     
     # Initialize response
     resp = MessagingResponse()
@@ -150,7 +133,9 @@ def webhook():
     # Handle conversation based on current state
     elif session['state'] == STATES['INITIAL']:
         if incoming_msg.lower() == 'start':
-            session['state'] = STATES['AWAITING_CONTACT']
+            # Update state before sending response
+            session = update_session_state(sender_phone, STATES['AWAITING_CONTACT'])
+            logger.info(f"Starting new transaction flow for {sender_phone}")
             
             # Send text-based contact list
             response_text = get_contacts_text()
@@ -165,13 +150,20 @@ def webhook():
             
             if 1 <= contact_index <= len(contacts):
                 contact = contacts[contact_index - 1]
-                session['selected_contact'] = contact
-                session['state'] = STATES['AWAITING_AMOUNT']
+                
+                # Update state and store selected contact
+                session = update_session_state(
+                    sender_phone, 
+                    STATES['AWAITING_AMOUNT'],
+                    selected_contact=contact
+                )
+                logger.info(f"Contact selected: {contact['name']}")
                 
                 # Send amount prompt
                 response_text = get_amount_text(contact['name'])
             else:
-                response_text = "Invalid contact number. Please select from the list:\n\n" + get_contacts_text()
+                logger.warning(f"Invalid contact index: {contact_index}")
+                response_text = "Please select a valid contact from the list:\n\n" + get_contacts_text()
         except ValueError:
             # If the user didn't enter a number, check if they entered a contact name
             contacts = get_all_contacts()
@@ -179,12 +171,19 @@ def webhook():
             
             if matching_contacts:
                 contact = matching_contacts[0]
-                session['selected_contact'] = contact
-                session['state'] = STATES['AWAITING_AMOUNT']
+                
+                # Update state and store selected contact
+                session = update_session_state(
+                    sender_phone, 
+                    STATES['AWAITING_AMOUNT'],
+                    selected_contact=contact
+                )
+                logger.info(f"Contact selected by name: {contact['name']}")
                 
                 # Send amount prompt
                 response_text = get_amount_text(contact['name'])
             else:
+                logger.warning(f"No matching contact found for: {incoming_msg}")
                 response_text = "Please select a valid contact from the list:\n\n" + get_contacts_text()
     
     elif session['state'] == STATES['AWAITING_AMOUNT']:
@@ -193,8 +192,14 @@ def webhook():
         if amount_match:
             try:
                 amount = float(amount_match.group(1))
-                session['amount'] = amount
-                session['state'] = STATES['AWAITING_CONFIRMATION']
+                
+                # Update state and store amount
+                session = update_session_state(
+                    sender_phone, 
+                    STATES['AWAITING_CONFIRMATION'],
+                    amount=amount
+                )
+                logger.info(f"Amount entered: {amount}")
                 
                 # Send confirmation message
                 response_text = get_confirmation_text(
@@ -202,15 +207,17 @@ def webhook():
                     amount
                 )
             except ValueError:
+                logger.warning(f"Invalid amount format: {incoming_msg}")
                 response_text = "Invalid amount. Please enter a valid number."
         else:
+            logger.warning(f"No amount found in message: {incoming_msg}")
             response_text = "Please enter a valid amount (numbers only)."
     
     elif session['state'] == STATES['AWAITING_CONFIRMATION']:
         if incoming_msg.lower() in ['yes', 'y', 'confirm']:
             # Add the transaction to Google Sheets (always use 'lend' as transaction type)
-            if DEBUG:
-                print(f"Adding transaction: {session['selected_contact']['id']}, {session['selected_contact']['name']}, {session['amount']}")
+            logger.info(f"Confirming transaction: {session['selected_contact']['name']}, ₹{session['amount']}")
+            
             try:
                 success = add_transaction(
                     session['selected_contact']['id'],
@@ -218,11 +225,21 @@ def webhook():
                     session['amount'],
                     'lend'  # Always use 'lend' as the transaction type
                 )
+                
+                # Also add to session history
+                add_transaction_to_history(
+                    sender_phone,
+                    session['selected_contact']['id'],
+                    session['selected_contact']['name'],
+                    session['amount']
+                )
+                
             except Exception as e:
-                print(f"Error adding transaction: {e}")
+                logger.error(f"Error adding transaction: {e}")
                 success = False
             
             if success:
+                logger.info(f"Transaction successfully recorded")
                 response_text = (
                     f"✅ Transaction recorded!\n\n"
                     f"You are giving {session['selected_contact']['name']} ₹{session['amount']:.2f}\n\n"
@@ -232,6 +249,7 @@ def webhook():
                 # Reset session
                 reset_session(sender_phone)
             else:
+                logger.error(f"Failed to record transaction")
                 response_text = "❌ Error recording transaction. Please try again."
         
         elif incoming_msg.lower() in ['no', 'n', 'cancel']:
@@ -245,13 +263,13 @@ def webhook():
         response_text = "Welcome to Money Tracker! Send 'start' to begin a new transaction or 'help' for commands."
     
     # Log the response
-    print(f"Response: '{response_text}'")
+    logger.info(f"Response: '{response_text}'")
     
     # Add the message to the response
     resp.message(response_text)
     
     # Log the updated session state
-    print(f"Updated session state: {session}")
+    logger.info(f"Updated session state: {session['state']}")
     
     return str(resp)
 
